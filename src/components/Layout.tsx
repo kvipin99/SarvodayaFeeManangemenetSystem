@@ -45,7 +45,17 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, onPageChange }) 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
-              <School className="h-8 w-8 text-blue-600" />
+              <img 
+                src="/New Logo.png" 
+                alt="Sarvodaya School Logo" 
+                className="h-12 w-12 rounded-full object-cover"
+                onError={(e) => {
+                  // Fallback to icon if image fails to load
+                  e.currentTarget.style.display = 'none';
+                  e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                }}
+              />
+              <School className="h-8 w-8 text-blue-600 hidden" />
               <h1 className="ml-3 text-xl font-bold text-gray-900">
                 Sarvodaya Higher Secondary School
               </h1>

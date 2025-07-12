@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Payment, Student } from '../types';
+import { Payment, Student, BusStop } from '../types';
+import { configService } from '../services/configService';
 import { 
   FileText, 
   Download, 
@@ -8,13 +9,19 @@ import {
   Calendar,
   IndianRupee,
   TrendingUp,
-  Receipt
+  Receipt,
+  Users,
+  Bus,
+  MapPin
 } from 'lucide-react';
 
 const Reports: React.FC = () => {
   const { user } = useAuth();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [filteredPayments, setFilteredPayments] = useState<Payment[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [busStops, setBusStops] = useState<BusStop[]>([]);
+  const [activeTab, setActiveTab] = useState<'payments' | 'students'>('payments');
   const [filters, setFilters] = useState({
     paymentType: '',
     class: '',
@@ -22,19 +29,23 @@ const Reports: React.FC = () => {
     dateFrom: '',
     dateTo: '',
     busNumber: '',
+    busStop: '',
+    tripNumber: '',
   });
 
   useEffect(() => {
-    loadPayments();
+    loadData();
   }, [user]);
 
   useEffect(() => {
     filterPayments();
   }, [payments, filters]);
 
-  const loadPayments = () => {
+  const loadData = () => {
     const allPayments: Payment[] = JSON.parse(localStorage.getItem('school_payments') || '[]');
     const allStudents: Student[] = JSON.parse(localStorage.getItem('school_students') || '[]');
+    
+    setStudents(allStudents);
     
     // Populate student data in payments
     const paymentsWithStudents = allPayments.map(payment => ({
@@ -47,9 +58,17 @@ const Reports: React.FC = () => {
         p => p.student.class === user.class && p.student.division === user.division
       );
       setPayments(teacherPayments);
+      const teacherStudents = allStudents.filter(
+        s => s.class === user.class && s.division === user.division
+      );
+      setStudents(teacherStudents);
     } else {
       setPayments(paymentsWithStudents);
+      setStudents(allStudents);
     }
+    
+    // Load bus stops
+    configService.getBusStops().then(setBusStops);
   };
 
   const filterPayments = () => {
@@ -71,6 +90,14 @@ const Reports: React.FC = () => {
       filtered = filtered.filter(p => p.student.busNumber === parseInt(filters.busNumber));
     }
 
+    if (filters.busStop) {
+      filtered = filtered.filter(p => p.student.busStop === filters.busStop);
+    }
+
+    if (filters.tripNumber) {
+      filtered = filtered.filter(p => p.student.tripNumber === parseInt(filters.tripNumber));
+    }
+
     if (filters.dateFrom) {
       filtered = filtered.filter(p => 
         new Date(p.createdAt) >= new Date(filters.dateFrom)
@@ -87,17 +114,17 @@ const Reports: React.FC = () => {
   };
 
   const downloadReport = () => {
-    const csvContent = generateCSVReport();
+    const csvContent = activeTab === 'payments' ? generatePaymentCSVReport() : generateStudentCSVReport();
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `payment_report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `${activeTab}_report_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const generateCSVReport = () => {
+  const generatePaymentCSVReport = () => {
     const headers = [
       'Receipt Number',
       'Student Name',
@@ -129,6 +156,88 @@ const Reports: React.FC = () => {
     return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
   };
 
+  const generateStudentCSVReport = () => {
+    const headers = [
+      'Admission Number',
+      'Student Name',
+      'Class',
+      'Division',
+      'Mobile',
+      'Bus Stop',
+      'Bus Number',
+      'Trip Number'
+    ];
+
+    const filteredStudents = getFilteredStudents();
+    const rows = filteredStudents.map(student => [
+      student.admissionNumber,
+      student.name,
+      student.class,
+      student.division,
+      student.mobile,
+      student.busStop,
+      student.busNumber,
+      student.tripNumber
+    ]);
+
+    return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+  };
+
+  const getFilteredStudents = () => {
+    let filtered = [...students];
+
+    if (filters.class) {
+      filtered = filtered.filter(s => s.class === parseInt(filters.class));
+    }
+
+    if (filters.division) {
+      filtered = filtered.filter(s => s.division === filters.division);
+    }
+
+    if (filters.busNumber) {
+      filtered = filtered.filter(s => s.busNumber === parseInt(filters.busNumber));
+    }
+
+    if (filters.busStop) {
+      filtered = filtered.filter(s => s.busStop === filters.busStop);
+    }
+
+    if (filters.tripNumber) {
+      filtered = filtered.filter(s => s.tripNumber === parseInt(filters.tripNumber));
+    }
+
+    return filtered;
+  };
+
+  const getStudentStats = () => {
+    const filteredStudents = getFilteredStudents();
+    
+    // Group by different criteria
+    const byClass = filteredStudents.reduce((acc, student) => {
+      const key = `${student.class}${student.division}`;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const byBusStop = filteredStudents.reduce((acc, student) => {
+      acc[student.busStop] = (acc[student.busStop] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const byBusNumber = filteredStudents.reduce((acc, student) => {
+      const key = `Bus ${student.busNumber}`;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const byTrip = filteredStudents.reduce((acc, student) => {
+      const key = `Trip ${student.tripNumber}`;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return { byClass, byBusStop, byBusNumber, byTrip, total: filteredStudents.length };
+  };
   const printReceipt = (payment: Payment) => {
     const receiptWindow = window.open('', '_blank');
     if (!receiptWindow) return;
@@ -220,65 +329,143 @@ const Reports: React.FC = () => {
         <h2 className="text-2xl font-bold text-gray-900">
           {user?.role === 'teacher' ? 'My Reports' : 'Payment Reports'}
         </h2>
-        <button
-          onClick={downloadReport}
-          className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-        >
-          <Download className="h-4 w-4 mr-2" />
-          Download Report
-        </button>
+        <div className="flex space-x-3">
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab('payments')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'payments'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Payment Reports
+            </button>
+            {user?.role === 'admin' && (
+              <button
+                onClick={() => setActiveTab('students')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === 'students'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Student Reports
+              </button>
+            )}
+          </div>
+          <button
+            onClick={downloadReport}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Download {activeTab === 'payments' ? 'Payment' : 'Student'} Report
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center">
-            <div className="p-3 rounded-lg bg-blue-100">
-              <IndianRupee className="h-6 w-6 text-blue-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Collections</p>
-              <p className="text-2xl font-bold text-gray-900">₹{totalAmount.toLocaleString()}</p>
+      {activeTab === 'payments' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-blue-100">
+                <IndianRupee className="h-6 w-6 text-blue-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Collections</p>
+                <p className="text-2xl font-bold text-gray-900">₹{totalAmount.toLocaleString()}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center">
-            <div className="p-3 rounded-lg bg-green-100">
-              <TrendingUp className="h-6 w-6 text-green-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Payments</p>
-              <p className="text-2xl font-bold text-gray-900">{filteredPayments.length}</p>
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-green-100">
+                <TrendingUp className="h-6 w-6 text-green-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Payments</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredPayments.length}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center">
-            <div className="p-3 rounded-lg bg-purple-100">
-              <FileText className="h-6 w-6 text-purple-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Development Fee</p>
-              <p className="text-2xl font-bold text-gray-900">₹{(totalByType.development || 0).toLocaleString()}</p>
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-purple-100">
+                <FileText className="h-6 w-6 text-purple-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Development Fee</p>
+                <p className="text-2xl font-bold text-gray-900">₹{(totalByType.development || 0).toLocaleString()}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center">
-            <div className="p-3 rounded-lg bg-orange-100">
-              <FileText className="h-6 w-6 text-orange-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Bus Fee</p>
-              <p className="text-2xl font-bold text-gray-900">₹{(totalByType.bus || 0).toLocaleString()}</p>
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-orange-100">
+                <FileText className="h-6 w-6 text-orange-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Bus Fee</p>
+                <p className="text-2xl font-bold text-gray-900">₹{(totalByType.bus || 0).toLocaleString()}</p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-blue-100">
+                <Users className="h-6 w-6 text-blue-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Students</p>
+                <p className="text-2xl font-bold text-gray-900">{getStudentStats().total}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-green-100">
+                <MapPin className="h-6 w-6 text-green-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Bus Stops</p>
+                <p className="text-2xl font-bold text-gray-900">{Object.keys(getStudentStats().byBusStop).length}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-purple-100">
+                <Bus className="h-6 w-6 text-purple-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Active Buses</p>
+                <p className="text-2xl font-bold text-gray-900">{Object.keys(getStudentStats().byBusNumber).length}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow-sm border">
+            <div className="flex items-center">
+              <div className="p-3 rounded-lg bg-orange-100">
+                <FileText className="h-6 w-6 text-orange-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Classes</p>
+                <p className="text-2xl font-bold text-gray-900">{Object.keys(getStudentStats().byClass).length}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-lg shadow-sm border">
@@ -288,16 +475,18 @@ const Reports: React.FC = () => {
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <select
-            value={filters.paymentType}
-            onChange={(e) => setFilters({ ...filters, paymentType: e.target.value })}
-            className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All Payment Types</option>
-            <option value="development">Development Fee</option>
-            <option value="bus">Bus Fee</option>
-            <option value="special">Special Payment</option>
-          </select>
+          {activeTab === 'payments' && (
+            <select
+              value={filters.paymentType}
+              onChange={(e) => setFilters({ ...filters, paymentType: e.target.value })}
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">All Payment Types</option>
+              <option value="development">Development Fee</option>
+              <option value="bus">Bus Fee</option>
+              <option value="special">Special Payment</option>
+            </select>
+          )}
 
           {user?.role === 'admin' && (
             <>
@@ -328,6 +517,19 @@ const Reports: React.FC = () => {
               </select>
 
               <select
+                value={filters.busStop}
+                onChange={(e) => setFilters({ ...filters, busStop: e.target.value })}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Bus Stops</option>
+                {busStops.map(stop => (
+                  <option key={stop.id} value={stop.name}>
+                    {stop.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
                 value={filters.busNumber}
                 onChange={(e) => setFilters({ ...filters, busNumber: e.target.value })}
                 className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -339,103 +541,183 @@ const Reports: React.FC = () => {
                   </option>
                 ))}
               </select>
+
+              <select
+                value={filters.tripNumber}
+                onChange={(e) => setFilters({ ...filters, tripNumber: e.target.value })}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Trip Numbers</option>
+                {Array.from({ length: 3 }, (_, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    Trip {i + 1}
+                  </option>
+                ))}
+              </select>
             </>
           )}
 
-          <div className="flex items-center">
-            <Calendar className="h-4 w-4 text-gray-400 mr-2" />
-            <input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+          {activeTab === 'payments' && (
+            <>
+              <div className="flex items-center">
+                <Calendar className="h-4 w-4 text-gray-400 mr-2" />
+                <input
+                  type="date"
+                  value={filters.dateFrom}
+                  onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
+                  className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
 
-          <div className="flex items-center">
-            <Calendar className="h-4 w-4 text-gray-400 mr-2" />
-            <input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+              <div className="flex items-center">
+                <Calendar className="h-4 w-4 text-gray-400 mr-2" />
+                <input
+                  type="date"
+                  value={filters.dateTo}
+                  onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
+                  className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       {/* Payment List */}
-      <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Receipt
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Student
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Payment Details
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Amount
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredPayments.map((payment) => (
-                <tr key={payment.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{payment.receiptNumber}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{payment.student.name}</div>
-                    <div className="text-sm text-gray-500">
-                      Class {payment.student.class}{payment.student.division} • #{payment.student.admissionNumber}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{payment.description}</div>
-                    <div className="text-sm text-gray-500">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        payment.paymentType === 'development' ? 'bg-purple-100 text-purple-800' :
-                        payment.paymentType === 'bus' ? 'bg-orange-100 text-orange-800' :
-                        'bg-pink-100 text-pink-800'
-                      }`}>
-                        {payment.paymentType}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">₹{payment.amount}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{new Date(payment.createdAt).toLocaleDateString()}</div>
-                    <div className="text-sm text-gray-500">by {payment.createdBy}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button
-                      onClick={() => printReceipt(payment)}
-                      className="text-blue-600 hover:text-blue-900 flex items-center"
-                    >
-                      <Receipt className="h-4 w-4 mr-1" />
-                      Print
-                    </button>
-                  </td>
+      {activeTab === 'payments' ? (
+        <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Receipt
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Student
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payment Details
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Amount
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredPayments.map((payment) => (
+                  <tr key={payment.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{payment.receiptNumber}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{payment.student.name}</div>
+                      <div className="text-sm text-gray-500">
+                        Class {payment.student.class}{payment.student.division} • #{payment.student.admissionNumber}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{payment.description}</div>
+                      <div className="text-sm text-gray-500">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          payment.paymentType === 'development' ? 'bg-purple-100 text-purple-800' :
+                          payment.paymentType === 'bus' ? 'bg-orange-100 text-orange-800' :
+                          'bg-pink-100 text-pink-800'
+                        }`}>
+                          {payment.paymentType}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">₹{payment.amount}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{new Date(payment.createdAt).toLocaleDateString()}</div>
+                      <div className="text-sm text-gray-500">by {payment.createdBy}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button
+                        onClick={() => printReceipt(payment)}
+                        className="text-blue-600 hover:text-blue-900 flex items-center"
+                      >
+                        <Receipt className="h-4 w-4 mr-1" />
+                        Print
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="space-y-6">
+          {/* Student Statistics */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Students by Class</h3>
+              <div className="space-y-2">
+                {Object.entries(getStudentStats().byClass).map(([classDiv, count]) => (
+                  <div key={classDiv} className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Class {classDiv}</span>
+                    <span className="text-sm font-medium text-gray-900 bg-blue-100 px-2 py-1 rounded">
+                      {count} students
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Students by Bus Stop</h3>
+              <div className="space-y-2">
+                {Object.entries(getStudentStats().byBusStop).map(([stop, count]) => (
+                  <div key={stop} className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">{stop}</span>
+                    <span className="text-sm font-medium text-gray-900 bg-green-100 px-2 py-1 rounded">
+                      {count} students
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Students by Bus Number</h3>
+              <div className="space-y-2">
+                {Object.entries(getStudentStats().byBusNumber).map(([bus, count]) => (
+                  <div key={bus} className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">{bus}</span>
+                    <span className="text-sm font-medium text-gray-900 bg-purple-100 px-2 py-1 rounded">
+                      {count} students
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-sm border">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Students by Trip Number</h3>
+              <div className="space-y-2">
+                {Object.entries(getStudentStats().byTrip).map(([trip, count]) => (
+                  <div key={trip} className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">{trip}</span>
+                    <span className="text-sm font-medium text-gray-900 bg-orange-100 px-2 py-1 rounded">
+                      {count} students
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

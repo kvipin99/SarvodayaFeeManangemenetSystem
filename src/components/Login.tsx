@@ -20,7 +20,8 @@ const Login: React.FC = () => {
         setError('Invalid username or password');
       }
     } catch (err) {
-      setError('An error occurred during login');
+      console.error('Login error:', err);
+      setError('An error occurred during login. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -32,7 +33,17 @@ const Login: React.FC = () => {
         <div className="bg-white rounded-xl shadow-lg p-8">
           <div className="text-center mb-8">
             <div className="flex justify-center mb-4">
-              <School className="h-12 w-12 text-blue-600" />
+              <img 
+                src="/New Logo.png" 
+                alt="Sarvodaya School Logo" 
+                className="h-16 w-16 rounded-full object-cover"
+                onError={(e) => {
+                  // Fallback to icon if image fails to load
+                  e.currentTarget.style.display = 'none';
+                  e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                }}
+              />
+              <School className="h-12 w-12 text-blue-600 hidden" />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
               Sarvodaya Higher Secondary School
